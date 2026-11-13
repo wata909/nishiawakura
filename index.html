@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>西粟倉 フィールド地図</title>
+<meta name="theme-color" content="#1f5f4a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="lib/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="netState" hidden>オフライン</div>
+<button id="logBar" hidden></button>
+<div id="catchBar" hidden>流域を求めたい地点（川の上）をタップ <button id="catchCancel" aria-label="中止">✕</button></div>
+
+<nav id="toolbar">
+  <button data-view="layers"><span class="ic">◧</span>地図</button>
+  <button id="btnLocate"><span class="ic">◎</span>現在地</button>
+  <button data-view="log" id="btnLog"><span class="ic">⏺</span>記録</button>
+  <button id="btnCatch"><span class="ic">💧</span>集水域</button>
+  <button data-view="dl"><span class="ic">⬇</span>保存</button>
+  <button data-view="more"><span class="ic">⋯</span>その他</button>
+</nav>
+
+<aside id="panel" aria-hidden="true">
+  <header><b id="panelTitle"></b><button id="btnClose" class="x" aria-label="閉じる">×</button></header>
+
+  <!-- ===== 地図（レイヤ） ===== -->
+  <section id="view-layers" class="view">
+    <div class="lrow"><span class="lab">背景</span><div id="baseSeg" class="seg"></div></div>
+
+    <div class="lrow"><span class="lab">地形</span><div id="terrSeg" class="chips"></div></div>
+    <div id="terrOps"></div>
+
+    <div class="lrow"><span class="lab">主題図</span><div id="themeSeg" class="chips"></div></div>
+    <div id="themeSub"></div>
+
+    <div class="lrow"><span class="lab">重ねる</span>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" id="chkGnss" hidden>GNSSログ</label>
+        <label class="chip"><input type="checkbox" id="chkFude" hidden>筆ポリゴン</label>
+        <label class="chip"><input type="checkbox" id="chkPop" hidden>人口</label>
+        <span class="chipgrp"><label class="chip"><input type="checkbox" id="chkBound" hidden>旧市町村界</label><select id="selBoundYear" aria-label="旧市町村界の年次"></select></span>
+        <label class="chip"><input type="checkbox" id="chkUser" hidden>読込データ</label>
+      </div>
+    </div>
+    <div id="vecSub">
+      <div class="sub" data-for="chkFude"><div class="legend"><span><i style="background:#64b5f6"></i>田</span><span><i style="background:#ffd54f"></i>畑</span><span>2022年度</span><span id="fudeInfo"></span></div></div>
+      <div class="sub" data-for="chkPop"><div id="popLegend" class="legend"></div><div class="legend"><span>令和2年国勢調査 500m</span><span id="popInfo"></span></div></div>
+      <div class="sub" data-for="chkUser"><div id="userList"></div></div>
+    </div>
+  </section>
+
+  <!-- ===== GNSSログ ===== -->
+  <section id="view-log" class="view">
+    <button id="btnLogToggle" class="btn primary big">● 記録を始める</button>
+    <div id="logMeta" class="est"></div>
+    <ol id="logList" class="loglist"></ol>
+    <div class="btnrow">
+      <button id="btnLogFit" class="btn">軌跡を表示</button>
+      <button id="btnLogGpx" class="btn">GPXで保存</button>
+      <button id="btnLogGeo" class="btn">GeoJSONで保存</button>
+      <button id="btnLogClear" class="btn">消去</button>
+    </div>
+    <p class="note">記録は端末内に残り、再読込しても消えません。iPhoneでは画面が消えたりSafariを閉じたりすると記録が止まるため、記録中は画面を点けたままにしてください（対応端末では自動で画面ロックを防ぎます）。範囲保存のZIP書き出しにもログが入ります。</p>
+  </section>
+
+  <!-- ===== 範囲保存 ===== -->
+  <section id="view-dl" class="view">
+    <p class="note">赤い四角の範囲を端末に保存します。角の●をドラッグで調整。</p>
+    <div class="btnrow"><button id="btnSelect" class="btn">今の画面に合わせる</button></div>
+    <div id="dlEstimate" class="est"></div>
+    <div class="lrow"><span class="lab">名前</span><input type="text" id="areaName" placeholder="例: 調査地A"></div>
+    <div class="btnrow">
+      <button id="btnDownload" class="btn primary">端末に保存</button>
+      <button id="btnCancel" class="btn" hidden>中止</button>
+    </div>
+    <progress id="dlProg" value="0" max="1" hidden></progress>
+    <div id="dlMsg" class="note"></div>
+
+    <details>
+      <summary>保存する内容・ズーム</summary>
+      <p class="note">開いたときに、表示中の地図＋標高データ（集水域用）が選ばれます。</p>
+      <div id="dlLayers"></div>
+      <div class="lrow">ズーム <input type="number" id="zMin" min="2" max="18" value="12"> 〜 <input type="number" id="zMax" min="2" max="18" value="16"></div>
+      <label class="row"><input type="checkbox" id="dlBound" checked> 旧市町村界（全年次）</label>
+      <label class="row"><input type="checkbox" id="dlFude" checked> 農地の筆ポリゴン</label>
+      <p class="note">人口メッシュは範囲内の分が自動で保存されます。</p>
+    </details>
+
+    <details id="areasBox" open>
+      <summary>保存済みの範囲</summary>
+      <div id="areaList"></div>
+      <div id="storageInfo" class="note"></div>
+    </details>
+  </section>
+
+  <!-- ===== その他 ===== -->
+  <section id="view-more" class="view">
+    <div class="btnrow">
+      <button id="btnShare" class="btn">⤴ この場所を共有</button>
+      <button id="btnHeritage" class="btn">遺跡（文化財総覧WebGIS）↗</button>
+    </div>
+    <p class="note">共有URLには、場所・ズーム・表示中のレイヤが入ります。</p>
+
+    <details>
+      <summary>データの読込（遺跡GeoJSONなど）</summary>
+      <label class="btn file">GeoJSONを読込む<input type="file" id="fileGeo" accept=".geojson,.json" multiple hidden></label>
+      <div id="userInfo" class="note"></div>
+      <p class="note">人口メッシュは令和2年国勢調査500mが入っています。別の統計表を使うときは e-Stat のZIPを読込めます（保存範囲を指定すると対象メッシュのリンクが出ます）。</p>
+      <div id="meshLinks"></div>
+      <label class="btn file">e-StatのZIP/TXTを読込む<input type="file" id="fileStat" accept=".zip,.txt,.csv" multiple hidden></label>
+    </details>
+
+    <details>
+      <summary>ZIPで書き出し（QGIS等）</summary>
+      <p class="note">保存済み範囲のタイルとベクタを書き出します。植生図・CS立体図のタイルは配信元の設定上含められません（G空間情報センターで入手できます）。</p>
+      <select id="selExportArea"></select>
+      <button id="btnExport" class="btn">書き出し</button>
+      <div id="expMsg" class="note"></div>
+    </details>
+
+    <details>
+      <summary>使い方</summary>
+      <ul class="note credits">
+        <li>集水域：💧を押して川の上をタップ。地理院の標高データ（10m）からその地点より上流の集水域と主な流路を計算します。結果は読込データとして残り、ZIPにも入ります。圏外では標高データを保存した範囲だけ計算できます。</li>
+        <li>地質図：表示中に地図をタップすると、その地点の凡例が出ます。</li>
+        <li>遺跡：文化財総覧WebGISはAPIが非公開のため、今の場所で開くリンクにしています。</li>
+        <li>主題図（地質・植生など）は1つ選び、地形（陰影・色別標高）はその上に乗算で重なります。</li>
+      </ul>
+    </details>
+
+    <details>
+      <summary>出典</summary>
+      <ul class="note credits">
+        <li>CS立体図：林野庁「平成30年7月豪雨・DEM/微地形表現図/グラウンドデータ（林野庁加工）」（G空間情報センター、公共データ利用規約 第1.0版）</li>
+        <li>地理院タイル（国土地理院）</li>
+        <li>地質図：産総研地質調査総合センター「20万分の1日本シームレス地質図V2」（CC BY 4.0）</li>
+        <li>植生図：環境省生物多様性センター「現存植生図2024」ラスタタイル（G空間情報センター掲載、公共データ利用規約 第1.0版）</li>
+        <li>旧市町村界：歴史的行政区域データセットβ版（CODH）、国土交通省「国土数値情報（行政区域データ）」をもとにNIIが加工</li>
+        <li>筆ポリゴン：農林水産省「筆ポリゴンデータ（2022年度公開）」（農研機構 公開のFlatGeobuf版を利用）</li>
+        <li>集水域：地理院タイル（標高タイル DEM10B）からアプリ内で計算</li>
+        <li>人口：総務省統計局 国勢調査 地域メッシュ統計（e-Stat）</li>
+      </ul>
+    </details>
+  </section>
+</aside>
+
+<script src="lib/leaflet.min.js"></script>
+<script src="lib/topojson-client.min.js"></script>
+<script src="lib/fflate.min.js"></script>
+<script src="lib/flatgeobuf-geojson.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
